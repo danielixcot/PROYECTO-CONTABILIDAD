@@ -1,0 +1,230 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime, date
+import calendar
+import json
+from tkcalendar import Calendar
+
+class AccountingSystem:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Sistema Contable")
+        self.root.geometry("800x600")
+        
+        # Almacenamiento de datos
+        self.transactions = []
+        self.current_entry_number = 1
+        self.accounts = {
+            'assets': ['Mercaderías', 'Suministros', 'Mobiliario y Equipo', 'Efectivo'],
+            'liabilities': ['IVA por Pagar', 'IVA por Cobrar', 'Cuentas por Pagar'],
+            'equity': ['Capital'],
+            'expenses': ['Gastos Administrativos', 'Gastos por Depreciación', 'Sueldos por Pagar'],
+            'revenue': ['Ventas']
+        }
+        
+        self.create_gui()
+        self.check_automatic_entries()
+
+    def get_all_accounts(self):
+        all_accounts = []
+        for category in self.accounts.values():
+            all_accounts.extend(category)
+        return sorted(all_accounts)
+
+    def create_gui(self):
+        # Marco principal
+        entry_frame = ttk.LabelFrame(self.root, text="Ingreso de Transacciones", padding="10")
+        entry_frame.pack(fill="x", padx=10, pady=5)
+
+        # Número de partida
+        ttk.Label(entry_frame, text=f"Partida: {self.current_entry_number}").grid(row=0, column=0, sticky="w")
+        
+        # Marco de fecha
+        date_frame = ttk.Frame(entry_frame)
+        date_frame.grid(row=1, column=0, columnspan=2, sticky="w", pady=5)
+        
+        ttk.Label(date_frame, text="Fecha:").pack(side="left", padx=(0, 5))
+        self.date_entry = ttk.Entry(date_frame, width=20)
+        self.date_entry.pack(side="left", padx=(0, 5))
+        self.date_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        
+        # Botón de calendario
+        self.cal_button = ttk.Button(date_frame, text="📅", width=3, command=self.show_calendar)
+        self.cal_button.pack(side="left")
+        
+        # Cuenta debe
+        ttk.Label(entry_frame, text="Cuenta (Debe)").grid(row=2, column=0, sticky="w")
+        self.debit_account = ttk.Combobox(entry_frame, values=self.get_all_accounts())
+        self.debit_account.grid(row=2, column=1, sticky="w")
+        
+        # Cuenta haber
+        ttk.Label(entry_frame, text="Cuenta (Haber)").grid(row=3, column=0, sticky="w")
+        self.credit_account = ttk.Combobox(entry_frame, values=self.get_all_accounts())
+        self.credit_account.grid(row=3, column=1, sticky="w")
+        
+        # Descripción
+        ttk.Label(entry_frame, text="Descripción").grid(row=4, column=0, sticky="w")
+        self.description = ttk.Entry(entry_frame, width=40)
+        self.description.grid(row=4, column=1, sticky="w")
+        
+        # Monto
+        ttk.Label(entry_frame, text="Monto").grid(row=5, column=0, sticky="w")
+        self.amount = ttk.Entry(entry_frame, width=20)
+        self.amount.grid(row=5, column=1, sticky="w")
+        
+        # Botón agregar transacción
+        ttk.Button(entry_frame, text="Agregar Transacción", 
+                  command=self.add_transaction).grid(row=6, column=0, columnspan=2, pady=10)
+
+        # Lista de transacciones
+        list_frame = ttk.LabelFrame(self.root, text="Lista de Transacciones", padding="10")
+        list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Tabla de transacciones
+        self.tree = ttk.Treeview(list_frame, columns=("Date", "Description", "Debit", "Credit", "Amount"), 
+                                show="headings")
+        self.tree.heading("Date", text="Fecha")
+        self.tree.heading("Description", text="Descripción")
+        self.tree.heading("Debit", text="Debe")
+        self.tree.heading("Credit", text="Haber")
+        self.tree.heading("Amount", text="Monto")
+        self.tree.pack(fill="both", expand=True)
+
+    def show_calendar(self):
+        top = tk.Toplevel(self.root)
+        top.title("Seleccionar Fecha")
+        
+        cal = Calendar(top, selectmode='day', date_pattern='dd/mm/yyyy',
+                      year=datetime.now().year,
+                      month=datetime.now().month,
+                      day=datetime.now().day)
+        cal.pack(padx=10, pady=10)
+        
+        def set_date():
+            self.date_entry.delete(0, tk.END)
+            self.date_entry.insert(0, cal.get_date())
+            top.destroy()
+        
+        ttk.Button(top, text="OK", command=set_date).pack(pady=5)
+
+    def validate_transaction_date(self, transaction_date):
+        current_date = datetime.now()
+        return (transaction_date.year == current_date.year and 
+                transaction_date.month == current_date.month)
+
+    def clear_entries(self):
+        self.description.delete(0, tk.END)
+        self.amount.delete(0, tk.END)
+        self.debit_account.set('')
+        self.credit_account.set('')
+        self.date_entry.delete(0, tk.END)
+        self.date_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+
+    def add_transaction(self):
+        try:
+            # Validar campos vacíos
+            if not all([self.debit_account.get(), self.credit_account.get(), 
+                       self.description.get(), self.amount.get()]):
+                messagebox.showerror("Error", "Todos los campos son obligatorios")
+                return
+
+            amount = float(self.amount.get())
+            if amount <= 0:
+                messagebox.showerror("Error", "El monto debe ser mayor que cero")
+                return
+
+            transaction_date = datetime.strptime(self.date_entry.get(), "%d/%m/%Y")
+            
+            if not self.validate_transaction_date(transaction_date):
+                messagebox.showerror("Error", "No se permiten transacciones de otros meses o años")
+                return
+            
+            transaction = {
+                'date': transaction_date.strftime("%d/%m/%Y"),
+                'description': self.description.get(),
+                'debit_account': self.debit_account.get(),
+                'credit_account': self.credit_account.get(),
+                'amount': amount,
+                'entry_number': self.current_entry_number
+            }
+            
+            self.transactions.append(transaction)
+            self.tree.insert("", "end", values=(
+                transaction['date'],
+                transaction['description'],
+                transaction['debit_account'],
+                transaction['credit_account'],
+                f"${transaction['amount']:.2f}"
+            ))
+            
+            self.current_entry_number += 1
+            self.clear_entries()
+            
+        except ValueError:
+            messagebox.showerror("Error", "Por favor ingrese un monto válido")
+
+    def check_automatic_entries(self):
+        current_date = datetime.now()
+        if current_date.day == 28:
+            self.calculate_depreciation()
+            self.compensate_vat()
+        self.root.after(24*60*60*1000, self.check_automatic_entries)
+
+    def calculate_depreciation(self):
+        depreciation_amount = sum(t['amount'] for t in self.transactions 
+                                if t['debit_account'] == 'Mobiliario y Equipo') * 0.05
+        
+        if depreciation_amount > 0:
+            transaction = {
+                'date': datetime.now().strftime("%d/%m/%Y"),
+                'description': "Depreciación mensual de activos",
+                'debit_account': "Gastos por Depreciación",
+                'credit_account': "Depreciación Acumulada",
+                'amount': depreciation_amount,
+                'entry_number': self.current_entry_number
+            }
+            self.transactions.append(transaction)
+            self.tree.insert("", "end", values=(
+                transaction['date'],
+                transaction['description'],
+                transaction['debit_account'],
+                transaction['credit_account'],
+                f"${transaction['amount']:.2f}"
+            ))
+            self.current_entry_number += 1
+
+    def compensate_vat(self):
+        vat_receivable = sum(t['amount'] for t in self.transactions 
+                            if t['debit_account'] == "IVA por Cobrar")
+        vat_payable = sum(t['amount'] for t in self.transactions 
+                         if t['credit_account'] == "IVA por Pagar")
+        
+        if vat_receivable != vat_payable:
+            difference = abs(vat_receivable - vat_payable)
+            if vat_receivable > vat_payable:
+                debit, credit = "IVA por Pagar", "IVA por Cobrar"
+            else:
+                debit, credit = "IVA por Cobrar", "IVA por Pagar"
+                
+            transaction = {
+                'date': datetime.now().strftime("%d/%m/%Y"),
+                'description': "Compensación mensual de IVA",
+                'debit_account': debit,
+                'credit_account': credit,
+                'amount': difference,
+                'entry_number': self.current_entry_number
+            }
+            self.transactions.append(transaction)
+            self.tree.insert("", "end", values=(
+                transaction['date'],
+                transaction['description'],
+                transaction['debit_account'],
+                transaction['credit_account'],
+                f"${transaction['amount']:.2f}"
+            ))
+            self.current_entry_number += 1
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = AccountingSystem(root)
+    root.mainloop()
