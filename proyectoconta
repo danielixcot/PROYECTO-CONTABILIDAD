@@ -1,0 +1,324 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import random
+import json
+
+MES_ACTUAL = 5
+ANIO_ACTUAL = 2025
+
+class SistemaContableApp:
+    def __init__(self, root):
+        # Configurar estilo
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TLabel', font=('Segoe UI', 10), padding=5)
+        style.configure('TButton', font=('Segoe UI', 10), padding=8)
+        style.configure('Treeview', font=('Segoe UI', 9), rowheight=24)
+        style.configure('TNotebook.Tab', font=('Segoe UI', 10, 'bold'), padding=[12, 8])
+
+        root.title("Sistema Contable - El Niño")
+        root.geometry("950x650")
+
+        self.transacciones = []
+        self.partida_actual = 2
+
+        # Notebook principal
+        notebook = ttk.Notebook(root)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Pestañas
+        self.tab_diario = ttk.Frame(notebook, padding=10)
+        self.tab_mayor = ttk.Frame(notebook, padding=10)
+        self.tab_balance = ttk.Frame(notebook, padding=10)
+        notebook.add(self.tab_diario, text='Libro Diario')
+        notebook.add(self.tab_mayor, text='Libro Mayor')
+        notebook.add(self.tab_balance, text='Balance')
+
+        self.construir_tab_diario()
+        self.construir_tab_mayor()
+        self.construir_tab_balance()
+
+    def construir_tab_diario(self):
+        frame = ttk.LabelFrame(self.tab_diario, text="Registrar Transacciones", padding=15)
+        frame.pack(fill='x', padx=5, pady=5)
+
+        # Campos de entrada
+        lbl_tipo = ttk.Label(frame, text="Tipo de Transacción:")
+        lbl_tipo.grid(row=0, column=0, sticky='w')
+        self.tipo_var = tk.StringVar()
+        self.cbo_tipo = ttk.Combobox(frame, textvariable=self.tipo_var, width=28)
+        self.cbo_tipo['values'] = ["Venta", "Compra Mercadería", "Compra Insumos/Mobiliario", "Gastos Administrativos", "Pago de Salarios"]
+        self.cbo_tipo.grid(row=0, column=1, sticky='w')
+        self.cbo_tipo.bind("<<ComboboxSelected>>", self.activar_campos)
+
+        ttk.Label(frame, text="Cuenta (Debe):").grid(row=1, column=0, sticky='w')
+        self.debe_var = tk.StringVar()
+        self.cbo_debe = ttk.Combobox(frame, textvariable=self.debe_var, width=28, state='readonly')
+        self.cbo_debe.grid(row=1, column=1, sticky='w')
+
+        ttk.Label(frame, text="Cuenta (Haber):").grid(row=1, column=2, sticky='w', padx=(20,0))
+        self.haber_var = tk.StringVar()
+        self.cbo_haber = ttk.Combobox(frame, textvariable=self.haber_var, width=28, state='readonly')
+        self.cbo_haber.grid(row=1, column=3, sticky='w')
+
+        ttk.Label(frame, text="Monto Q:").grid(row=2, column=0, sticky='w')
+        self.txt_monto = ttk.Entry(frame, width=30)
+        self.txt_monto.grid(row=2, column=1, sticky='w')
+
+        # Botones
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=4, pady=12)
+        ttk.Button(btn_frame, text="Registrar", command=self.registrar_transaccion).pack(side='left', padx=6)
+        ttk.Button(btn_frame, text="Calcular IVA/Dep.", command=self.calcular_iva_y_depreciaciones).pack(side='left', padx=6)
+        ttk.Button(btn_frame, text="Exportar PDF", command=self.generar_pdf).pack(side='left', padx=6)
+        ttk.Button(btn_frame, text="Guardar JSON", command=self.guardar_diario_json).pack(side='left', padx=6)
+
+        # Tabla de transacciones
+        cols = ("Partida","Fecha","Cuenta","Mov","Monto")
+        self.tbl_diario = ttk.Treeview(self.tab_diario, columns=cols, show="headings", padding=5)
+        for col in cols:
+            self.tbl_diario.heading(col, text=col)
+            self.tbl_diario.column(col, width=140, anchor='center')
+        self.tbl_diario.pack(fill='both', expand=True, pady=10)
+
+    def activar_campos(self, event):
+        tipo = self.tipo_var.get()
+        opciones = {
+            "Compra Mercadería": (['Mercaderías','IVA por Cobrar'], ['Caja','Bancos','Proveedores']),
+            "Venta": (['Caja','Bancos','Clientes'], ['Ventas','IVA por Pagar']),
+            "Compra Insumos/Mobiliario": (['Insumos','Mobiliario y Equipo','IVA por Cobrar'], ['Caja','Bancos','Proveedores']),
+            "Gastos Administrativos": (['Gastos Administrativos','Gastos Públicos','Publicidad','Energía Eléctrica'], ['Caja','Bancos']),
+            "Pago de Salarios": (['Salarios Ventas','Salario Adm.'], ['Caja','Bancos'])
+        }
+        d, h = opciones.get(tipo, ([],[]))
+        self.cbo_debe['values'], self.cbo_haber['values'] = d, h
+
+    def generar_fecha_aleatoria(self):
+        day = random.randint(1,28)
+        return f"{day:02d}/{MES_ACTUAL:02d}/{ANIO_ACTUAL}"
+
+    def registrar_transaccion(self):
+        tipo = self.tipo_var.get()
+        fecha = self.generar_fecha_aleatoria()
+        try:
+            monto = float(self.txt_monto.get())
+        except ValueError:
+            messagebox.showerror("Error", "Monto no válido.")
+            return
+        iva = round(monto * 0.12, 2)
+        subtotal = round(monto - iva, 2)
+        partidas = []
+        if tipo == "Compra Mercadería":
+            partidas = [(fecha, "Mercaderías", "Debe", subtotal),
+                        (fecha, "IVA por Cobrar", "Debe", iva),
+                        (fecha, self.haber_var.get(), "Haber", monto)]
+        elif tipo == "Venta":
+            partidas = [(fecha, self.debe_var.get(), "Debe", monto),
+                        (fecha, "Ventas", "Haber", subtotal),
+                        (fecha, "IVA por Pagar", "Haber", iva)]
+        elif tipo == "Compra Insumos/Mobiliario":
+            partidas = [(fecha, self.debe_var.get(), "Debe", subtotal),
+                        (fecha, "IVA por Cobrar", "Debe", iva),
+                        (fecha, self.haber_var.get(), "Haber", monto)]
+        else:
+            partidas = [(fecha, self.debe_var.get(), "Debe", monto),
+                        (fecha, self.haber_var.get(), "Haber", monto)]
+        for fecha, cuenta, mov, val in partidas:
+            self.transacciones.append((fecha, cuenta, mov, val))
+            self.tbl_diario.insert("", tk.END, values=(self.partida_actual, fecha, cuenta, mov, f"Q{val:.2f}"))
+        self.partida_actual += 1
+        self.txt_monto.delete(0, tk.END)
+
+    def calcular_iva_y_depreciaciones(self):
+        fecha = f"28/{MES_ACTUAL:02d}/{ANIO_ACTUAL}"
+        dep_mob = round((35825 * 0.20) / 12, 2)
+        dep_comp = round((15000 * 0.3333) / 12, 2)
+        partidas = [
+            (fecha, "Depreciación Mobiliario y Equipo", "Debe", dep_mob),
+            (fecha, "Depreciación Acumulada Mobiliario y Equipo", "Haber", dep_mob),
+            (fecha, "Depreciación Equipo de Computo", "Debe", dep_comp),
+            (fecha, "Depreciación Acumulada Equipo de Computo", "Haber", dep_comp)
+        ]
+        iva_pagar = sum(t[3] for t in self.transacciones if t[1] == "IVA por Pagar" and t[2] == "Haber")
+        iva_cobrar = sum(t[3] for t in self.transacciones if t[1] == "IVA por Cobrar" and t[2] == "Debe")
+        ajuste = min(iva_pagar, iva_cobrar)
+        if ajuste > 0:
+            partidas += [(fecha, "IVA por Pagar", "Debe", ajuste),
+                         (fecha, "IVA por Cobrar", "Haber", ajuste)]
+        for fecha, cuenta, mov, val in partidas:
+            self.transacciones.append((fecha, cuenta, mov, val))
+            self.tbl_diario.insert("", tk.END, values=(self.partida_actual, fecha, cuenta, mov, f"Q{val:.2f}"))
+        self.partida_actual += 1
+        messagebox.showinfo("Listo", "Depreciaciones e IVA ajustado con éxito.")
+
+    def guardar_diario_json(self):
+        if not self.transacciones:
+            messagebox.showerror("Error", "No hay transacciones para guardar.")
+            return
+        data = []
+        for idx, (fecha, cuenta, mov, val) in enumerate(self.transacciones, start=1):
+            data.append({"partida": idx, "fecha": fecha, "cuenta": cuenta, "movimiento": mov, "monto": val})
+        with open("libro_diario.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        messagebox.showinfo("JSON", "libro_diario.json guardado.")
+
+    def generar_pdf(self):
+        if not self.transacciones:
+            messagebox.showerror("Error", "No hay transacciones para guardar.")
+            return
+        c = canvas.Canvas("libro_diario.pdf", pagesize=letter)
+        c.setFont("Helvetica", 12)
+        c.drawString(50, 750, "Libro Diario de Transacciones")
+        y = 720
+        for fecha, cuenta, mov, val in self.transacciones:
+            c.drawString(50, y, f"{fecha} | {cuenta} | {mov} | Q{val:.2f}")
+            y -= 20
+            if y < 50:
+                c.showPage()
+                y = 750
+        c.save()
+        messagebox.showinfo("PDF", "libro_diario.pdf generado.")
+
+    def construir_tab_mayor(self):
+        frame = ttk.Frame(self.tab_mayor)
+        frame.pack(padx=10, pady=10, fill='both', expand=True)
+        
+        self.tbl_mayor = ttk.Treeview(frame, columns=("cuenta", "debe", "haber", "saldo"), show="headings")
+        for col in ("cuenta", "debe", "haber", "saldo"):
+            self.tbl_mayor.heading(col, text=col.capitalize())
+            self.tbl_mayor.column(col, width=150)
+        self.tbl_mayor.pack(pady=10, fill='both', expand=True)
+        
+        ttk.Button(frame, text="Generar Libro Mayor", command=self.generar_libro_mayor).pack(pady=5)
+        ttk.Button(frame, text="Exportar Mayor a PDF", command=self.exportar_mayor_pdf).pack(pady=5)
+
+    def construir_tab_balance(self):
+        frame = ttk.Frame(self.tab_balance)
+        frame.pack(padx=10, pady=10, fill='both', expand=True)
+        
+        self.txt_balance = tk.Text(frame, height=20, width=60)
+        self.txt_balance.pack(pady=10, fill='both', expand=True)
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x', pady=5)
+        ttk.Button(btn_frame, text="Generar Balance", command=self.generar_balance).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Exportar Balance a PDF", command=self.exportar_balance_pdf).pack(side='left', padx=5)
+
+    def generar_libro_mayor(self):
+        cuentas = {}
+        for fecha, cuenta, mov, val in self.transacciones:
+            if cuenta not in cuentas:
+                cuentas[cuenta] = {"debe": 0, "haber": 0}
+            if mov == "Debe":
+                cuentas[cuenta]["debe"] += val
+            else:
+                cuentas[cuenta]["haber"] += val
+
+        self.tbl_mayor.delete(*self.tbl_mayor.get_children())
+        for cuenta, valores in cuentas.items():
+            saldo = valores["debe"] - valores["haber"]
+            self.tbl_mayor.insert("", tk.END, values=(
+                cuenta,
+                f"Q{valores['debe']:.2f}",
+                f"Q{valores['haber']:.2f}",
+                f"Q{saldo:.2f}"
+            ))
+
+    def generar_balance(self):
+        cuentas = {}
+        for fecha, cuenta, mov, val in self.transacciones:
+            if cuenta not in cuentas:
+                cuentas[cuenta] = {"debe": 0, "haber": 0}
+            if mov == "Debe":
+                cuentas[cuenta]["debe"] += val
+            else:
+                cuentas[cuenta]["haber"] += val
+
+        # Calcular utilidad bruta
+        ventas = sum(t[3] for t in self.transacciones if t[1] == "Ventas" and t[2] == "Haber")
+        costo_ventas = sum(t[3] for t in self.transacciones if t[1] == "Mercaderías" and t[2] == "Debe")
+        utilidad_bruta = ventas - costo_ventas
+
+        # Calcular gastos operativos
+        gastos_operativos = sum(t[3] for t in self.transacciones 
+                               if t[1].startswith("Gastos") or t[1].startswith("Depreciación"))
+
+        # Calcular utilidad neta
+        utilidad_neta = utilidad_bruta - gastos_operativos
+
+        # Generar reporte
+        self.txt_balance.delete(1.0, tk.END)
+        self.txt_balance.insert(tk.END, f"""
+BALANCE GENERAL AL {28}/{MES_ACTUAL}/{ANIO_ACTUAL}
+================================================
+
+ACTIVOS
+-------
+""")
+        activos_total = 0
+        for cuenta, valores in cuentas.items():
+            saldo = valores["debe"] - valores["haber"]
+            if saldo > 0 and not cuenta.startswith("Gastos"):
+                self.txt_balance.insert(tk.END, f"{cuenta}: Q{saldo:.2f}\n")
+                activos_total += saldo
+
+        self.txt_balance.insert(tk.END, f"\nTotal Activos: Q{activos_total:.2f}\n\nPASIVOS\n-------\n")
+        
+        pasivos_total = 0
+        for cuenta, valores in cuentas.items():
+            saldo = valores["haber"] - valores["debe"]
+            if saldo > 0 and cuenta not in ["Ventas"]:
+                self.txt_balance.insert(tk.END, f"{cuenta}: Q{saldo:.2f}\n")
+                pasivos_total += saldo
+
+        self.txt_balance.insert(tk.END, f"""
+Total Pasivos: Q{pasivos_total:.2f}
+
+ESTADO DE RESULTADOS
+-------------------
+Ventas: Q{ventas:.2f}
+Costo de Ventas: Q{costo_ventas:.2f}
+Utilidad Bruta: Q{utilidad_bruta:.2f}
+Gastos Operativos: Q{gastos_operativos:.2f}
+Utilidad Neta: Q{utilidad_neta:.2f}
+""")
+
+    def exportar_mayor_pdf(self):
+        c = canvas.Canvas("libro_mayor.pdf", pagesize=letter)
+        c.setFont("Helvetica", 12)
+        c.drawString(50, 750, "Libro Mayor")
+        y = 720
+        
+        for item in self.tbl_mayor.get_children():
+            valores = self.tbl_mayor.item(item)["values"]
+            c.drawString(50, y, f"{valores[0]} | Debe: {valores[1]} | Haber: {valores[2]} | Saldo: {valores[3]}")
+            y -= 20
+            if y < 50:
+                c.showPage()
+                y = 750
+        c.save()
+        messagebox.showinfo("PDF", "libro_mayor.pdf generado.")
+
+    def exportar_balance_pdf(self):
+        c = canvas.Canvas("balance_general.pdf", pagesize=letter)
+        c.setFont("Helvetica", 12)
+        c.drawString(50, 750, "Balance General")
+        y = 720
+        
+        for line in self.txt_balance.get(1.0, tk.END).split('\n'):
+            if line.strip():
+                c.drawString(50, y, line)
+                y -= 20
+                if y < 50:
+                    c.showPage()
+                    y = 750
+        c.save()
+        messagebox.showinfo("PDF", "balance_general.pdf generado.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SistemaContableApp(root)
+    root.mainloop()
